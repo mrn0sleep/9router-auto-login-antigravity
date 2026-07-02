@@ -497,13 +497,14 @@ def main():
     parser.add_argument(
         "--file",
         type=str,
-        default=AKUN_FILE,
-        help=f"Path ke file akun (default: {AKUN_FILE})",
+        default=None,
+        help="Path ke file akun (default: akun.txt di folder script)",
     )
     args = parser.parse_args()
 
     global AKUN_FILE
-    AKUN_FILE = args.file
+    if args.file is not None:
+        AKUN_FILE = args.file
 
     print_banner()
 
