@@ -20,6 +20,8 @@ Fitur:
 import os
 import sys
 import subprocess
+import tempfile
+import shutil
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV_DIR = os.path.join(SCRIPT_DIR, ".venv")
@@ -268,13 +270,14 @@ def force_input(page, locator, text, timeout=15, desc="field"):
 def login_account(account, index, total, headless=False):
     """Proses login untuk satu akun.
 
-    Flow:
+    Flow (sama persis kayak bot.js):
     1. Buka browser -> Langsung ke halaman Antigravity
-    2. Klik Add -> Confirm
-    3. Handle tab baru (Google Login)
-    4. Input email & password
-    5. Handle konfirmasi Google
-    6. Hapus akun dari akun.txt kalau berhasil
+    2. Klik tombol Add
+    3. Klik tombol konfirmasi di modal (tombol merah)
+    4. Tunggu tab baru muncul (Google Login)
+    5. Pindah ke tab baru, input email -> Next -> password -> Next
+    6. Handle konfirmasi Google (I Understand -> Allow)
+    7. Hapus akun dari akun.txt kalau berhasil
     """
     email = account["email"]
     password = account["password"]
@@ -283,13 +286,22 @@ def login_account(account, index, total, headless=False):
     print(f" Akun {index + 1}/{total}: {email}")
     print(f"{'=' * 55}")
 
-    # --- Setup browser ---
-    print(" [1/6] Membuka browser...")
+    # --- Setup browser (fresh profile, no cache) ---
+    print(" [1/7] Membuka browser (fresh profile)...")
+
+    # Bikin temporary folder buat user data — tiap akun dapet profile bersih
+    tmp_user_data = tempfile.mkdtemp(prefix="antigravity_")
+
     co = ChromiumOptions()
     co.set_argument("--start-maximized")
     co.set_argument("--disable-blink-features=AutomationControlled")
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")
+
+    # Fresh profile: tiap akun pake folder temp sendiri
+    # Gak ada cookies/cache/session dari akun sebelumnya
+    co.set_user_data_path(tmp_user_data)
+    co.auto_port()  # random port biar gak conflict sama browser lain
 
     if headless:
         co.headless(True)
@@ -298,12 +310,12 @@ def login_account(account, index, total, headless=False):
 
     try:
         # --- Langsung ke halaman Antigravity ---
-        print(f" [2/6] Navigasi ke {TARGET_URL}")
+        print(f" [2/7] Navigasi ke {TARGET_URL}")
         page.get(TARGET_URL)
         time.sleep(3)
 
-        # --- Klik Add ---
-        print(" [3/6] Klik tombol 'Add'...")
+        # --- Klik Add (di halaman Antigravity) ---
+        print(" [3/7] Klik tombol 'Add'...")
         add_btn = None
         for locator in [
             "tag:button@@text():Add Connection",
@@ -322,64 +334,79 @@ def login_account(account, index, total, headless=False):
         if add_btn is None:
             raise Exception("Tidak bisa menemukan tombol 'Add'")
         add_btn.click()
-        time.sleep(1)
+        time.sleep(2)
 
-        # --- Klik Confirm (I Understand / Continue) ---
-        print(" [4/6] Klik konfirmasi (I Understand / Continue)...")
-        confirm_btn = None
+        # --- Klik tombol konfirmasi di modal router ---
+        # bot.js: cari button yang innerText includes "I Understand" atau "Continue"
+        # Kalau gak ada, cari button merah (bg-red-500) via JS
+        print(" [4/7] Klik konfirmasi modal...")
+        confirm_clicked = False
+
+        # Coba cari berdasarkan teks
         for locator in [
             "tag:button@@text():I Understand",
             "tag:button@@text():I understand",
             "tag:button@@text():Continue",
             "tag:button@@text():Confirm",
+            "tag:button@@text():Yes",
+            "tag:button@@text():OK",
         ]:
             try:
-                ele = page.ele(locator, timeout=5)
+                ele = page.ele(locator, timeout=3)
                 if ele:
-                    confirm_btn = ele
+                    ele.click()
+                    confirm_clicked = True
                     break
             except Exception:
                 continue
 
-        if confirm_btn is None:
-            raise Exception("Tidak bisa menemukan tombol konfirmasi")
-        confirm_btn.click()
-
-        # --- Tunggu tab baru (Google Login) ---
-        print(" [5/6] Menunggu tab Google Login...")
-        time.sleep(5)
-
-        # Cari tab Google
-        google_tab = None
-        all_tabs = page.get_tabs()
-        for tab in all_tabs:
+        # Fallback: cari via JS sama kayak bot.js
+        if not confirm_clicked:
             try:
-                tab_url = tab.url if hasattr(tab, "url") else str(tab)
-                if "google" in tab_url.lower() or "accounts.google" in tab_url.lower():
-                    google_tab = tab
-                    break
+                result = page.run_js("""
+                    const btn = Array.from(document.querySelectorAll('button')).find(b =>
+                        b.innerText.includes('I Understand') ||
+                        b.innerText.includes('Continue') ||
+                        b.innerText.includes('Confirm') ||
+                        b.className.includes('bg-red') ||
+                        b.className.includes('danger')
+                    );
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                """)
+                confirm_clicked = bool(result)
             except Exception:
-                continue
+                pass
 
-        if google_tab is None:
-            # Kalau gak ketemu via URL, coba ambil tab terakhir
-            if len(all_tabs) > 1:
-                google_tab = all_tabs[-1]
-            else:
-                raise Exception("Tab Google Login tidak muncul")
+        if not confirm_clicked:
+            raise Exception("Tidak bisa menemukan tombol konfirmasi di modal")
 
-        # Pindah ke tab Google
-        page.get_tab(google_tab)
-        time.sleep(2)
+        # --- Tunggu tab baru muncul (Google Login popup) ---
+        print(" [5/7] Menunggu tab Google Login...")
 
-        # --- Input Email ---
-        print(f" [6/6] Login Google: {email}")
+        # Pake wait.new_tab() — tunggu sampe tab baru beneran muncul
+        new_tab_id = page.wait.new_tab(timeout=15)
+        if not new_tab_id:
+            raise Exception("Tab Google Login tidak muncul dalam 15 detik")
+
+        # Ambil object tab dari tab ID
+        tab = page.get_tab(new_tab_id)
+        print(f"        Tab baru ditemukan (ID: {new_tab_id})")
+        print(f"        URL: {tab.url[:80]}")
+
+        # Tunggu halaman Google load
+        time.sleep(3)
+
+        # === SEMUA OPERASI DI BAWAH PAKE 'tab' (tab Google), BUKAN 'page' (tab router) ===
+
+        # --- Input Email di Google ---
+        print(f" [6/7] Login Google: {email}")
         print("        Input email...")
-        force_input(page, "#identifierId", email, timeout=15, desc="email field")
+        force_input(tab, "#identifierId", email, timeout=15, desc="email field")
         time.sleep(1)
 
         # Klik Next (email)
-        print("        Klik Next...")
+        print("        Klik Next (email)...")
         next_btn = None
         for locator in [
             "#identifierNext",
@@ -387,7 +414,7 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Berikutnya",
         ]:
             try:
-                ele = page.ele(locator, timeout=5)
+                ele = tab.ele(locator, timeout=5)
                 if ele:
                     next_btn = ele
                     break
@@ -399,18 +426,17 @@ def login_account(account, index, total, headless=False):
         next_btn.click()
         time.sleep(3)
 
-        # --- Input Password ---
+        # --- Input Password di Google ---
         print("        Input password...")
         pw_locators = [
             "@type=password",
             "tag:input@@type=password",
             "@name=Passwd",
-            "#password input",
         ]
         pw_done = False
         for loc in pw_locators:
             try:
-                force_input(page, loc, password, timeout=10, desc="password field")
+                force_input(tab, loc, password, timeout=10, desc="password field")
                 pw_done = True
                 break
             except Exception:
@@ -421,7 +447,7 @@ def login_account(account, index, total, headless=False):
         time.sleep(1)
 
         # Klik Next (password)
-        print("        Klik Next...")
+        print("        Klik Next (password)...")
         pw_next = None
         for locator in [
             "#passwordNext",
@@ -429,7 +455,7 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Berikutnya",
         ]:
             try:
-                ele = page.ele(locator, timeout=5)
+                ele = tab.ele(locator, timeout=5)
                 if ele:
                     pw_next = ele
                     break
@@ -441,10 +467,12 @@ def login_account(account, index, total, headless=False):
         pw_next.click()
         time.sleep(3)
 
-        # --- Handle konfirmasi Google ---
-        print("        Handle konfirmasi Google...")
+        # --- [7/7] Handle konfirmasi Google ---
+        # bot.js: klik #gaplustosNext (I Understand), lalu #submit_approve_access (Allow)
+        print(" [7/7] Handle konfirmasi Google...")
 
-        # Klik "I Understand" / "I agree" di Google
+        # Step A: Klik "I Understand"
+        i_understand_clicked = False
         for locator in [
             "#gaplustosNext",
             "tag:button@@text():I Understand",
@@ -453,15 +481,22 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():I agree",
         ]:
             try:
-                ele = page.ele(locator, timeout=5)
+                ele = tab.ele(locator, timeout=8)
                 if ele:
+                    time.sleep(1)
                     ele.click()
+                    i_understand_clicked = True
+                    print("        'I Understand' diklik")
                     time.sleep(2)
                     break
             except Exception:
                 continue
 
-        # Klik "Allow" / "Login" / "Continue"
+        if not i_understand_clicked:
+            print("        'I Understand' tidak ditemukan (mungkin gak ada), lanjut...")
+
+        # Step B: Klik "Allow" / "Login"
+        allow_clicked = False
         for locator in [
             "#submit_approve_access",
             "tag:button@@text():Allow",
@@ -470,15 +505,25 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Lanjutkan",
         ]:
             try:
-                ele = page.ele(locator, timeout=5)
+                ele = tab.ele(locator, timeout=8)
                 if ele:
+                    time.sleep(1)
                     ele.click()
+                    allow_clicked = True
+                    print("        'Allow' diklik")
                     time.sleep(2)
                     break
             except Exception:
                 continue
 
-        # --- SUKSES ---
+        if not allow_clicked:
+            print("        'Allow' tidak ditemukan (mungkin gak ada), lanjut...")
+
+        # --- Cek apakah beneran berhasil ---
+        # Tunggu sebentar buat redirect selesai
+        time.sleep(5)
+
+        # Sukses
         print(f"\n [SUKSES] Akun {index + 1}/{total} berhasil login: {email}")
         remove_account(account["raw"])
         print(f" [INFO]   Akun dihapus dari akun.txt")
@@ -494,6 +539,14 @@ def login_account(account, index, total, headless=False):
         try:
             page.quit()
             print(" [INFO]   Browser ditutup.")
+        except Exception:
+            pass
+
+        # Hapus temp profile folder biar gak numpuk
+        try:
+            if os.path.exists(tmp_user_data):
+                shutil.rmtree(tmp_user_data, ignore_errors=True)
+                print(" [INFO]   Temp profile dihapus.")
         except Exception:
             pass
 
