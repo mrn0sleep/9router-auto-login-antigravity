@@ -31,7 +31,7 @@ echo [OK] Python ditemukan
 %PYTHON% --version
 echo.
 
-REM --- Bikin virtual environment ---
+REM --- Bikin virtual environments ---
 if exist ".venv\Scripts\python.exe" (
     echo [OK] Virtual environment sudah ada di .venv\
 ) else (

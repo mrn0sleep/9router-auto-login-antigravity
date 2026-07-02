@@ -56,7 +56,7 @@ echo "[INFO] Menginstall DrissionPage di venv..."
 echo ""
 echo "[OK] DrissionPage berhasil diinstall!"
 
-# --- Cek Google Chrome ---
+# --- Cek Google Chromes ---
 echo ""
 if command -v google-chrome &> /dev/null || command -v chromium-browser &> /dev/null || command -v chromium &> /dev/null; then
     echo "[OK] Chrome/Chromium ditemukan!"

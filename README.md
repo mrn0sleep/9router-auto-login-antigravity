@@ -65,14 +65,9 @@ user3@gmail.com|password789
 
 ### 2. Jalankan Bot
 
-**Mode Normal (dengan browser):**
+**Mode Normal (dengan browser — RECOMMENDED):**
 ```bash
 python3 bot.py
-```
-
-**Mode Headless (tanpa browser / background):**
-```bash
-python3 bot.py --headless
 ```
 
 **Custom delay antar akun (contoh: 5 detik):**
@@ -87,8 +82,19 @@ python3 bot.py --file /path/to/akun-lain.txt
 
 **Kombinasi:**
 ```bash
-python3 bot.py --headless --delay 5 --file akun2.txt
+python3 bot.py --delay 5 --file akun2.txt
 ```
+
+> **Headless Mode (`--headless`):**  
+> Fitur headless (jalan di background tanpa browser muncul) **sedang dalam perbaikan**.  
+> Saat ini ada bug di mana Chrome headless kadang gagal connect ke WebSocket,  
+> terutama kalau ada proses Chrome lama yang masih nyangkut.  
+> **Gunakan mode normal (tanpa `--headless`) untuk hasil paling stabil.**  
+> Kalau mau coba headless, pastikan kill semua proses Chrome dulu:
+> ```bash
+> pkill -f chromium  # Linux
+> taskkill /F /IM chrome.exe  # Windows
+> ```
 
 ### 3. Flow Bot
 
@@ -113,7 +119,7 @@ Bot akan secara otomatis:
 
 | Opsi | Default | Keterangan |
 |------|---------|------------|
-| `--headless` | `False` | Jalankan browser di background |
+| `--headless` | `False` | Jalankan browser di background **(masih bug, lihat catatan di atas)** |
 | `--delay` | `3` | Delay antar akun (detik) |
 | `--file` | `akun.txt` | Path ke file akun |
 | `--help` | - | Tampilkan bantuan |
