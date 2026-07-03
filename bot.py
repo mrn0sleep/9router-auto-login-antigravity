@@ -11,6 +11,7 @@ Fitur:
   - Cross-platform (Windows, Linux, Mac)
   - Headless mode (opsi jalan di background)
   - Fresh browser profile tiap akun (gak ada cache nyangkut)
+  - 2 speed mode: --fast (internet cepat) dan default normal (internet lambat)
 """
 
 # ============================================================
@@ -98,6 +99,65 @@ import argparse  # noqa: E402
 TARGET_URL = "http://localhost:20128/dashboard/providers/antigravity"
 AKUN_FILE = os.path.join(SCRIPT_DIR, "akun.txt")
 DELAY_ANTAR_AKUN = 3
+
+# ============================================================
+# TIMING PROFILES
+# ============================================================
+# Localhost (9Router) selalu cepat di kedua mode.
+# Perbedaan cuma di Google — normal lebih sabar nunggu loading.
+#
+# Cara pakai:
+#   python bot.py              → mode NORMAL (default, internet lambat)
+#   python bot.py --fast       → mode FAST (internet cepat)
+
+TIMING = {
+    "fast": {
+        # --- Localhost (9Router) — selalu cepat ---
+        "page_load":          1,     # tunggu halaman router load
+        "after_add_click":    1,     # setelah klik Add
+        "after_confirm":      0.5,   # setelah klik konfirmasi modal
+        "wait_new_tab":       10,    # timeout tunggu tab Google muncul
+        # --- Google — cepat ---
+        "google_initial":     1,     # tunggu tab Google pertama load
+        "after_email_input":  0.5,   # setelah input email
+        "after_email_next":   2,     # setelah klik Next (email) → tunggu password
+        "password_timeout":   8,     # timeout cari field password
+        "after_pw_input":     0.5,   # setelah input password
+        "after_pw_next":      2,     # setelah klik Next (password) → tunggu konfirmasi
+        "step_loop_wait":     1,     # jeda antar step di loop konfirmasi
+        "tos_button_timeout": 3,     # timeout cari tombol di Workspace TOS
+        "after_tos_click":    1,     # setelah klik I understand (TOS)
+        "btn_find_timeout":   2,     # timeout cari tombol (Continue/Allow/dll)
+        "after_consent_btn":  1,     # setelah klik tombol consent
+        "after_allow":        1,     # setelah klik Allow
+        "no_btn_wait":        2,     # tunggu kalau gak ada tombol ketemu
+        "redirect_wait":      2,     # tunggu redirect selesai
+        "after_success":      1,     # setelah sukses, sebelum tutup browser
+    },
+    "normal": {
+        # --- Localhost (9Router) — tetap cepat ---
+        "page_load":          1,     # tunggu halaman router load
+        "after_add_click":    1,     # setelah klik Add
+        "after_confirm":      0.5,   # setelah klik konfirmasi modal
+        "wait_new_tab":       15,    # timeout tunggu tab Google muncul
+        # --- Google — lebih sabar ---
+        "google_initial":     3,     # tunggu tab Google pertama load
+        "after_email_input":  1,     # setelah input email
+        "after_email_next":   4,     # setelah klik Next (email) → tunggu password
+        "password_timeout":   15,    # timeout cari field password
+        "after_pw_input":     1,     # setelah input password
+        "after_pw_next":      4,     # setelah klik Next (password) → tunggu konfirmasi
+        "step_loop_wait":     2,     # jeda antar step di loop konfirmasi
+        "tos_button_timeout": 5,     # timeout cari tombol di Workspace TOS
+        "after_tos_click":    2,     # setelah klik I understand (TOS)
+        "btn_find_timeout":   3,     # timeout cari tombol (Continue/Allow/dll)
+        "after_consent_btn":  2,     # setelah klik tombol consent
+        "after_allow":        3,     # setelah klik Allow
+        "no_btn_wait":        3,     # tunggu kalau gak ada tombol ketemu
+        "redirect_wait":      3,     # tunggu redirect selesai
+        "after_success":      2,     # setelah sukses, sebelum tutup browser
+    },
+}
 
 
 # ============================================================
@@ -227,8 +287,11 @@ def force_input(page_or_tab, locator, text, timeout=15, desc="field"):
 # ============================================================
 # FUNGSI UTAMA: LOGIN SATU AKUN
 # ============================================================
-def login_account(account, index, total, headless=False):
-    """Proses login untuk satu akun."""
+def login_account(account, index, total, headless=False, t=None):
+    """Proses login untuk satu akun. t = timing dict."""
+    if t is None:
+        t = TIMING["normal"]
+
     email = account["email"]
     password = account["password"]
 
@@ -246,7 +309,7 @@ def login_account(account, index, total, headless=False):
     co.set_argument("--no-first-run")
     co.set_argument("--no-default-browser-check")
     co.set_user_data_path(tmp_user_data)
-    co.set_local_port(random.randint(19200, 29200))  # random port, gak pake auto_port cache
+    co.set_local_port(random.randint(19200, 29200))
 
     if headless:
         co.headless(True)
@@ -257,7 +320,7 @@ def login_account(account, index, total, headless=False):
         # --- [2/7] Navigasi ke halaman Antigravity ---
         print(f" [2/7] Navigasi ke {TARGET_URL}")
         page.get(TARGET_URL)
-        time.sleep(3)
+        time.sleep(t["page_load"])
 
         # --- [3/7] Klik Add ---
         print(" [3/7] Klik tombol 'Add'...")
@@ -265,10 +328,9 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Add Connection",
             "tag:button@@text():Add",
             "tag:button@@text()=Add",
-        ], timeout=8, desc="Add button")
+        ], timeout=1.5, desc="Add button")
 
         if not clicked:
-            # Fallback JS sama kayak bot.js
             clicked = page.run_js("""
                 const btn = Array.from(document.querySelectorAll('button'))
                     .find(b => b.textContent.trim().includes('Add'));
@@ -277,17 +339,21 @@ def login_account(account, index, total, headless=False):
             """)
         if not clicked:
             raise Exception("Tidak bisa menemukan tombol 'Add'")
-        time.sleep(2)
+        time.sleep(t["after_add_click"])
 
         # --- [4/7] Klik konfirmasi modal ---
-        # bot.js: cari button "I Understand" / "Continue", atau button merah
         print(" [4/7] Klik konfirmasi modal...")
+
+        # PENTING: catat tab yang ada SEBELUM klik konfirmasi,
+        # karena tab Google bisa langsung kebuka setelah klik
+        tabs_before = set(page.tab_ids)
+
         confirm_clicked = find_and_click(page, [
             "tag:button@@text():I Understand",
             "tag:button@@text():I understand",
             "tag:button@@text():Continue",
             "tag:button@@text():Confirm",
-        ], timeout=3, desc="confirm button")
+        ], timeout=1, desc="confirm button")
 
         if not confirm_clicked:
             confirm_clicked = page.run_js("""
@@ -305,14 +371,43 @@ def login_account(account, index, total, headless=False):
             raise Exception("Tidak bisa menemukan tombol konfirmasi di modal")
 
         # --- [5/7] Tunggu tab baru (Google Login) ---
+        # Tab Google bisa kebuka LANGSUNG setelah klik konfirmasi,
+        # jadi kita cek dulu apakah udah ada tab baru sebelum pake wait.new_tab()
         print(" [5/7] Menunggu tab Google Login...")
-        new_tab_id = page.wait.new_tab(timeout=15)
+
+        new_tab_id = None
+        wait_timeout = t["wait_new_tab"]
+
+        # Cara 1: Cek apakah tab baru udah ada (kebuka saat klik / sleep)
+        for _ in range(3):
+            time.sleep(0.5)
+            tabs_now = set(page.tab_ids)
+            new_tabs = tabs_now - tabs_before
+            if new_tabs:
+                new_tab_id = new_tabs.pop()
+                break
+
+        # Cara 2: Fallback ke wait.new_tab() kalau belum ada
         if not new_tab_id:
-            raise Exception("Tab Google Login tidak muncul dalam 15 detik")
+            new_tab_id = page.wait.new_tab(timeout=wait_timeout)
+
+        # Cara 3: Last resort — cek semua tab, cari yang URL-nya Google
+        if not new_tab_id:
+            for tid in page.tab_ids:
+                try:
+                    t_tab = page.get_tab(tid)
+                    if "accounts.google.com" in (t_tab.url or ""):
+                        new_tab_id = tid
+                        break
+                except Exception:
+                    continue
+
+        if not new_tab_id:
+            raise Exception(f"Tab Google Login tidak muncul dalam {wait_timeout} detik")
 
         tab = page.get_tab(new_tab_id)
         print(f"        Tab ditemukan: {tab.url[:70]}")
-        time.sleep(3)
+        time.sleep(t["google_initial"])
 
         # === Semua operasi Google pake 'tab', bukan 'page' ===
 
@@ -322,7 +417,7 @@ def login_account(account, index, total, headless=False):
         # Input email
         print("        Input email...")
         force_input(tab, "#identifierId", email, timeout=15, desc="email field")
-        time.sleep(1)
+        time.sleep(t["after_email_input"])
 
         # Klik Next (email)
         print("        Klik Next (email)...")
@@ -332,21 +427,21 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Berikutnya",
         ], timeout=5, desc="Next button"):
             raise Exception("Tombol Next (email) tidak ditemukan")
-        time.sleep(3)
+        time.sleep(t["after_email_next"])
 
         # Input password
         print("        Input password...")
         pw_done = False
         for loc in ["@type=password", "tag:input@@type=password", "@name=Passwd"]:
             try:
-                force_input(tab, loc, password, timeout=10, desc="password field")
+                force_input(tab, loc, password, timeout=t["password_timeout"], desc="password field")
                 pw_done = True
                 break
             except Exception:
                 continue
         if not pw_done:
             raise Exception("Field password tidak ditemukan")
-        time.sleep(1)
+        time.sleep(t["after_pw_input"])
 
         # Klik Next (password)
         print("        Klik Next (password)...")
@@ -356,50 +451,181 @@ def login_account(account, index, total, headless=False):
             "tag:button@@text():Berikutnya",
         ], timeout=5, desc="Next button"):
             raise Exception("Tombol Next (password) tidak ditemukan")
-        time.sleep(3)
+        time.sleep(t["after_pw_next"])
 
         # --- [7/7] Handle konfirmasi Google ---
-        # bot.js: WAJIB klik #gaplustosNext lalu #submit_approve_access
+        # Setelah masukin password + Next, Google bisa menampilkan
+        # beberapa halaman secara BERURUTAN:
+        #
+        #   Halaman 1 (akun pertama kali login):
+        #     "Welcome to your new account" (Workspace Terms of Service)
+        #     URL: accounts.google.com/v3/signin/speedbump/workspacetermsofservice
+        #     → harus klik "I understand"
+        #
+        #   Halaman 2 (selalu muncul):
+        #     "Make sure that you downloaded this app from Google"
+        #     → harus klik/konfirmasi (Continue / Allow / dll)
+        #
+        #   Setelah itu langsung redirect balik ke 9Router = SUKSES
+        #
+        # Strategi: loop cek halaman satu-satu, handle sesuai URL/konten,
+        # sampai redirect balik ke router atau timeout.
         print(" [7/7] Handle konfirmasi Google...")
 
-        # Step A: "I Understand" (#gaplustosNext)
-        print("        Tunggu 'I Understand'...")
-        if find_and_click(tab, [
-            "#gaplustosNext",
-            "tag:button@@text():I Understand",
-            "tag:button@@text():I understand",
-            "tag:button@@text():Saya memahami",
-            "tag:button@@text():I agree",
-        ], timeout=15, desc="I Understand"):
-            print("        'I Understand' diklik!")
-            time.sleep(2)
-        else:
-            print("        [WARN] 'I Understand' gak muncul, skip...")
+        MAX_STEPS = 10
+        step_count = 0
 
-        # Step B: "Allow" (#submit_approve_access) — ini WAJIB
-        print("        Tunggu 'Allow'...")
-        if find_and_click(tab, [
-            "#submit_approve_access",
-            "tag:button@@text():Allow",
-            "tag:button@@text():Izinkan",
-            "tag:button@@text():Continue",
-            "tag:button@@text():Lanjutkan",
-        ], timeout=15, desc="Allow"):
-            print("        'Allow' diklik!")
-            time.sleep(3)
-        else:
-            raise Exception("Tombol 'Allow' tidak ditemukan — login Google GAGAL")
+        while step_count < MAX_STEPS:
+            step_count += 1
+            time.sleep(t["step_loop_wait"])
+
+            # Cek apakah tab masih ada
+            try:
+                current_url = tab.url
+            except Exception:
+                # Tab udah nutup = redirect sukses
+                print("        Tab Google udah nutup (redirect sukses)")
+                break
+
+            # Cek apakah udah balik ke router (bukan google lagi)
+            if "accounts.google.com" not in current_url and "google.com" not in current_url:
+                print(f"        Redirect ke non-Google: {current_url[:70]}")
+                break
+
+            print(f"        [Step {step_count}] URL: {current_url[:80]}")
+
+            # ── Halaman: Workspace Terms of Service ──
+            # "Welcome to your new account" → klik "I understand"
+            if "workspacetermsofservice" in current_url or "speedbump" in current_url:
+                print("        >> Halaman 'Welcome to your new account' terdeteksi")
+                handled = find_and_click(tab, [
+                    "tag:button@@text():I understand",
+                    "tag:button@@text():I Understand",
+                    "tag:button@@text():Accept",
+                    "tag:button@@text():Saya memahami",
+                    "tag:input@@type=submit",
+                ], timeout=t["tos_button_timeout"], desc="I understand (Workspace TOS)")
+
+                if not handled:
+                    handled = tab.run_js("""
+                        window.scrollTo(0, document.body.scrollHeight);
+                        const btn = Array.from(document.querySelectorAll('button, input[type="submit"]'))
+                            .find(el => {
+                                const t = (el.innerText || el.value || '').toLowerCase();
+                                return t.includes('i understand') || t.includes('accept')
+                                    || t.includes('saya memahami');
+                            });
+                        if (btn) { btn.click(); return true; }
+                        return false;
+                    """)
+
+                if handled:
+                    print("        >> 'I understand' (Workspace TOS) diklik!")
+                    time.sleep(t["after_tos_click"])
+                    continue
+                else:
+                    print("        >> [WARN] Tombol di Workspace TOS gak ketemu, coba lanjut...")
+                    continue
+
+            # ── Halaman: OAuth consent / "Make sure..." / Allow ──
+            if "oauthchooseaccount" in current_url or "consent" in current_url \
+               or "signin/oauth" in current_url or "approval" in current_url:
+                print("        >> Halaman OAuth consent terdeteksi")
+
+            # Coba cari dan klik tombol-tombol yang mungkin muncul, satu per satu
+
+            # Coba 1: "Continue" / "Make sure..." confirmation
+            clicked = find_and_click(tab, [
+                "tag:button@@text():Continue",
+                "tag:button@@text():Lanjutkan",
+            ], timeout=t["btn_find_timeout"], desc="Continue")
+            if clicked:
+                print("        >> 'Continue' diklik!")
+                time.sleep(t["after_consent_btn"])
+                continue
+
+            # Coba 2: "I Understand" / "I understand" (generic)
+            clicked = find_and_click(tab, [
+                "#gaplustosNext",
+                "tag:button@@text():I Understand",
+                "tag:button@@text():I understand",
+                "tag:button@@text():Saya memahami",
+                "tag:button@@text():I agree",
+                "tag:button@@text():Saya setuju",
+                "tag:a@@text():I Understand",
+                "tag:a@@text():I understand",
+            ], timeout=t["btn_find_timeout"], desc="I Understand")
+            if clicked:
+                print("        >> 'I Understand' diklik!")
+                time.sleep(t["after_consent_btn"])
+                continue
+
+            # Coba 3: "Allow" / "Izinkan"
+            clicked = find_and_click(tab, [
+                "#submit_approve_access",
+                "tag:button@@text():Allow",
+                "tag:button@@text():Izinkan",
+            ], timeout=t["btn_find_timeout"], desc="Allow")
+            if clicked:
+                print("        >> 'Allow' diklik!")
+                time.sleep(t["after_allow"])
+                continue
+
+            # Coba 4: Checkbox yang perlu dicentang
+            try:
+                tab.run_js("""
+                    document.querySelectorAll('input[type="checkbox"]:not(:checked)')
+                        .forEach(cb => cb.click());
+                """)
+            except Exception:
+                pass
+
+            # Coba 5: Fallback JS — cari APAPUN yang bisa diklik
+            try:
+                clicked = tab.run_js("""
+                    const keywords = [
+                        'i understand', 'saya memahami',
+                        'continue', 'lanjutkan',
+                        'allow', 'izinkan',
+                        'accept', 'terima',
+                        'i agree', 'saya setuju',
+                        'confirm', 'konfirmasi',
+                        'next', 'berikutnya',
+                    ];
+                    const btn = Array.from(document.querySelectorAll('button, a, input[type="submit"]'))
+                        .find(el => {
+                            const text = (el.innerText || el.value || el.textContent || '').toLowerCase().trim();
+                            return keywords.some(kw => text.includes(kw));
+                        });
+                    if (btn) { btn.click(); return true; }
+                    return false;
+                """)
+            except Exception:
+                clicked = False
+            if clicked:
+                print("        >> Tombol diklik (via JS fallback)!")
+                time.sleep(t["after_consent_btn"])
+                continue
+
+            # Gak ada yang bisa diklik di iterasi ini
+            print(f"        >> [WAIT] Gak ada tombol, tunggu...")
+            time.sleep(t["no_btn_wait"])
+
+        if step_count >= MAX_STEPS:
+            raise Exception(
+                f"Terlalu banyak step konfirmasi Google ({MAX_STEPS}x) — "
+                "kemungkinan stuck di halaman yang gak dikenal"
+            )
 
         # --- Verifikasi: tunggu redirect dan cek tab Google nutup ---
         print("        Menunggu redirect selesai...")
-        time.sleep(5)
+        time.sleep(t["redirect_wait"])
 
         # Cek apakah tab Google udah nutup (redirect balik ke router = sukses)
         try:
             current_tabs = page.tab_ids
             google_still_open = new_tab_id in current_tabs
             if google_still_open:
-                # Tab masih buka, cek URL-nya
                 try:
                     current_url = tab.url
                     if "accounts.google.com" in current_url:
@@ -410,7 +636,7 @@ def login_account(account, index, total, headless=False):
                 except Exception as e:
                     if "login gagal" in str(e) or "Masih di halaman" in str(e):
                         raise
-                    # Tab mungkin udah nutup tapi masih kedetect, lanjut aja
+                    # Tab mungkin udah nutup tapi masih kedetect
         except Exception as e:
             if "login gagal" in str(e) or "Masih di halaman" in str(e):
                 raise
@@ -420,7 +646,7 @@ def login_account(account, index, total, headless=False):
         print(f"\n [SUKSES] Akun {index + 1}/{total}: {email}")
         remove_account(account["raw"])
         print(f" [INFO]   Akun dihapus dari akun.txt")
-        time.sleep(3)
+        time.sleep(t["after_success"])
 
     except Exception as e:
         print(f"\n [GAGAL] Akun {index + 1}/{total}: {email}")
@@ -451,6 +677,10 @@ def main():
         help="Jalankan browser di background (tanpa tampilan)",
     )
     parser.add_argument(
+        "--fast", action="store_true",
+        help="Mode cepat (internet bagus, delay minimal di Google)",
+    )
+    parser.add_argument(
         "--delay", type=int, default=DELAY_ANTAR_AKUN,
         help=f"Delay antar akun dalam detik (default: {DELAY_ANTAR_AKUN})",
     )
@@ -464,6 +694,9 @@ def main():
     if args.file is not None:
         AKUN_FILE = args.file
 
+    speed_mode = "fast" if args.fast else "normal"
+    t = TIMING[speed_mode]
+
     print_banner()
 
     # Kill zombie Chrome dari run sebelumnya yang masih nyangkut
@@ -471,7 +704,6 @@ def main():
         if sys.platform != "win32":
             os.system("pkill -f 'chromium.*antigravity_' 2>/dev/null")
             os.system("pkill -f 'chrome.*antigravity_' 2>/dev/null")
-        # Bersihin temp folder lama
         import glob
         for old_tmp in glob.glob(os.path.join(tempfile.gettempdir(), "antigravity_*")):
             try:
@@ -488,6 +720,7 @@ def main():
         sys.exit(1)
 
     print(f"\n Total akun: {len(accounts)}")
+    print(f" Speed mode: {speed_mode.upper()}")
     print(f" Headless mode: {'YA' if args.headless else 'TIDAK'}")
     print(f" Delay antar akun: {args.delay} detik")
     print(f" File akun: {AKUN_FILE}")
@@ -497,7 +730,7 @@ def main():
     gagal = 0
 
     for i, account in enumerate(accounts):
-        login_account(account, i, len(accounts), headless=args.headless)
+        login_account(account, i, len(accounts), headless=args.headless, t=t)
 
         remaining = read_accounts()
         if account["raw"] not in [a["raw"] for a in remaining]:

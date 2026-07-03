@@ -22,6 +22,11 @@ Built with **Python + DrissionPage** for anti-detection and high stability.
 - **Error handling** - If one account fails, continues to the next account
 - **Headless mode** - Can run in the background without showing the browser
 - **Cross-platform** - Runs on Windows, Linux, and Mac
+- **2 Speed Modes** - `--fast` for fast internet, default (normal) for slow/laggy internet
+- **Smart Google Consent Handler** - Automatically handles multiple Google confirmation pages:
+  - "Welcome to your new account" (Workspace Terms of Service)
+  - "Make sure that you downloaded this app from Google"
+  - OAuth consent (Allow/Continue)
 
 ---
 
@@ -74,9 +79,14 @@ user3@gmail.com|password789
 
 ### 2. Run the Bot
 
-**Normal Mode (with browser visible — RECOMMENDED):**
+**Normal Mode — internet lambat/ngelag (DEFAULT, RECOMMENDED):**
 ```bash
 python3 bot.py
+```
+
+**Fast Mode — internet cepat:**
+```bash
+python3 bot.py --fast
 ```
 
 **Custom delay between accounts (e.g., 5 seconds):**
@@ -91,7 +101,7 @@ python3 bot.py --file /path/to/other-accounts.txt
 
 **Combined:**
 ```bash
-python3 bot.py --delay 5 --file akun2.txt
+python3 bot.py --fast --delay 5 --file akun2.txt
 ```
 
 > **Headless Mode (`--headless`):**
@@ -118,7 +128,10 @@ The bot will automatically:
 7. Wait for a new tab to open (Google Login)
 8. Enter the **email** and click **Next**
 9. Enter the **password** and click **Next**
-10. Handle Google confirmations (I Understand, Allow, etc.)
+10. Handle Google confirmations (loops through all pages automatically):
+    - **"Welcome to your new account"** (Workspace TOS) → clicks "I understand"
+    - **"Make sure that you downloaded this app from Google"** → clicks Continue
+    - **OAuth consent** → clicks Allow
 11. If successful, remove the account from `akun.txt`
 12. Close the browser, delay, then move to the next account
 
@@ -128,10 +141,34 @@ The bot will automatically:
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--fast` | `False` | Fast mode — shorter delays for Google pages (use with good internet) |
 | `--headless` | `False` | Run the browser in the background **(still buggy, see note above)** |
 | `--delay` | `3` | Delay between accounts (seconds) |
 | `--file` | `akun.txt` | Path to the accounts file |
 | `--help` | - | Show help |
+
+---
+
+## Speed Mode Comparison
+
+Localhost (9Router) timing is the same in both modes — it's always fast since it's local.
+The difference is only on Google pages:
+
+| Google Operation | `--fast` | Normal (default) |
+|---|---|---|
+| Google tab initial load | 1s | 3s |
+| After email Next → wait password | 2s | 4s |
+| Password field search timeout | 8s | 15s |
+| After password Next → wait confirm | 2s | 4s |
+| Confirmation loop interval | 1s | 2s |
+| Workspace TOS button timeout | 8s | 12s |
+| After TOS click | 2s | 4s |
+| Consent button search timeout | 3s | 5s |
+| Wait when no button found | 2s | 4s |
+| After Allow click | 2s | 4s |
+| Redirect wait | 3s | 5s |
+
+> **Tip:** Start with normal mode (default). If everything runs smooth with no timeout errors, switch to `--fast`.
 
 ---
 
@@ -172,7 +209,8 @@ email@gmail.com|password
   - Windows: Download from [google.com/chrome](https://www.google.com/chrome/)
 
 ### 7. Persistent "timeout" errors
-- Might be a slow internet connection — try increasing the delay
+- Might be a slow internet connection — make sure you're using normal mode (without `--fast`)
+- If still timing out on normal mode, the delays might need to be increased in the `TIMING` dict inside `bot.py`
 - The router UI may have changed — check if the menu text is still the same
 - Try running it manually to debug:
   ```python
@@ -181,6 +219,11 @@ email@gmail.com|password
   page.get('http://localhost:20128/')
   # Manually inspect the elements present
   ```
+
+### 8. "The connection to the page has been disconnected"
+- This usually happens when internet is laggy and the bot tries to interact with a page that hasn't loaded yet
+- Switch from `--fast` to normal mode (remove the `--fast` flag)
+- If already on normal mode, you may need to increase the timing values in `bot.py`
 
 ---
 
